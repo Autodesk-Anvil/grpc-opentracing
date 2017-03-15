@@ -7,6 +7,9 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
+	"net"
+	"os"
 )
 
 // OpenTracingServerInterceptor returns a grpc.UnaryServerInterceptor suitable
@@ -33,6 +36,11 @@ func OpenTracingServerInterceptor(tracer opentracing.Tracer, optFuncs ...Option)
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (resp interface{}, err error) {
+
+		if _, ok := tracer.(opentracing.NoopTracer); ok {
+			return handler(ctx, req)
+		}
+
 		md, ok := metadata.FromContext(ctx)
 		if !ok {
 			md = metadata.New(nil)
@@ -53,6 +61,21 @@ func OpenTracingServerInterceptor(tracer opentracing.Tracer, optFuncs ...Option)
 			gRPCComponentTag,
 		)
 		defer serverSpan.Finish()
+
+		pr, ok := peer.FromContext(ctx)
+		if !ok {
+			serverSpan.SetTag("CallerIP", "Not Found")
+		} else if pr.Addr == net.Addr(nil) {
+			serverSpan.SetTag("CallerIP", "Nil")
+		} else {
+			serverSpan.SetTag("CallerIP", pr.Addr.String())
+		}
+
+		if hostname, err := os.Hostname(); err == nil {
+			serverSpan.SetTag("PodHostName", hostname)
+		} else {
+			serverSpan.SetTag("PodHostName", "Undefined")
+		}
 
 		ctx = opentracing.ContextWithSpan(ctx, serverSpan)
 		if otgrpcOpts.logPayloads {
